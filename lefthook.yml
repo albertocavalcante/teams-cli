@@ -1,0 +1,29 @@
+# Lefthook configuration
+# Install: lefthook install
+
+pre-commit:
+  commands:
+    ci:
+      run: just ci
+
+commit-msg:
+  commands:
+    semantic-commit:
+      run: |
+        commit_msg=$(sed -n '1p' {1})
+        pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([A-Za-z0-9._/-]+\))?(!)?: .+'
+        if ! printf '%s\n' "$commit_msg" | grep -Eq "$pattern"; then
+          echo "ERROR: Commit message does not follow semantic commit format"
+          echo ""
+          echo "Expected format: <type>(<scope>): <description>"
+          echo "Breaking change format: <type>(<scope>)!: <description>"
+          echo "Types: build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test"
+          echo ""
+          echo "Your message: $commit_msg"
+          exit 1
+        fi
+
+output:
+  - meta
+  - summary
+  - success

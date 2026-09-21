@@ -1,0 +1,61 @@
+# golangci-lint v2 configuration
+version = "2"
+
+[run]
+timeout = "5m"
+tests = true
+modules-download-mode = "readonly"
+
+[linters]
+default = "standard"
+enable = [
+  "bodyclose",
+  "copyloopvar",
+  "errcheck",
+  "gocritic",
+  "govet",
+  "ineffassign",
+  "intrange",
+  "misspell",
+  "noctx",
+  "staticcheck",
+  "unconvert",
+  "unparam",
+  "unused",
+  "whitespace",
+]
+disable = [
+  "exhaustruct",
+  "varnamelen",
+  "wrapcheck",
+]
+
+[linters.settings.errcheck]
+check-type-assertions = false
+check-blank = false
+exclude-functions = [
+  "(io.Closer).Close",
+  "(*os.File).Close",
+  # Terminal writes: a failure here means the pipe is gone, and there is
+  # nowhere left to report it to.
+  "fmt.Fprint",
+  "fmt.Fprintf",
+  "fmt.Fprintln",
+]
+
+[linters.settings.gocritic]
+enabled-tags = ["diagnostic", "performance", "style"]
+disabled-checks = ["hugeParam", "ifElseChain", "singleCaseSwitch"]
+
+[linters.settings.misspell]
+locale = "US"
+
+[linters.settings.staticcheck]
+checks = ["all", "-ST1000"]
+
+[linters.exclusions]
+generated = "lax"
+
+[[linters.exclusions.rules]]
+path = "_test\\.go"
+linters = ["errcheck", "unparam", "gocritic"]
