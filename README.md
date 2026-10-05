@@ -7,7 +7,7 @@ Teams endpoints require a Microsoft work or school account. Tokens are cached in
 ## Install
 
 ```sh
-go install github.com/albertocavalcante/teams-cli@latest
+go install github.com/albertocavalcante/teams-cli/cmd/teams@latest
 ```
 
 ## Use

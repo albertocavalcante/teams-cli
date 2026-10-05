@@ -2,5 +2,5 @@ bin/
 coverage.out
 coverage.html
 .DS_Store
-teams-cli
-teams
+/teams-cli
+/teams
