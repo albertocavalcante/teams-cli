@@ -5,7 +5,7 @@ go 1.26
 require (
 	github.com/albertocavalcante/msauth-go v0.3.1
 	github.com/albertocavalcante/msgraph-go v0.13.0
-	github.com/albertocavalcante/teams-go v0.1.0
+	github.com/albertocavalcante/teams-go v0.1.1
 	github.com/spf13/cobra v1.10.2
 )
 
@@ -23,9 +23,3 @@ require (
 	github.com/zalando/go-keyring v0.2.6 // indirect
 	golang.org/x/sys v0.26.0 // indirect
 )
-
-replace github.com/albertocavalcante/msauth-go => ../msauth-go
-
-replace github.com/albertocavalcante/msgraph-go => ../msgraph-go
-
-replace github.com/albertocavalcante/teams-go => ../teams-go

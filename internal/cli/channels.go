@@ -121,10 +121,9 @@ func newChannelReadCommand(a *app) *cobra.Command {
 		Short: "Read a channel's messages",
 		Long: "Read a channel's root messages, newest first.\n\n" +
 			"This returns root messages only, however far the listing pages: a\n" +
-			"reply never appears here, whether or not --replies was given. --replies\n" +
-			"expands each root message's first page of replies inline; a thread\n" +
-			"longer than that page is truncated with no indication in this output,\n" +
-			"which is why it defaults to off rather than a silently partial thread." +
+			"reply never appears here unless --replies is given. --replies\n" +
+			"includes every reply to each selected root message, following the\n" +
+			"thread's continuation links when needed." +
 			adminConsentNote,
 		Example: "  teams channel read 19:team-id@thread.tacv2 19:channel-id@thread.tacv2\n" +
 			"  teams channel read 19:team-id@thread.tacv2 19:channel-id@thread.tacv2 --replies",
@@ -145,17 +144,25 @@ func newChannelReadCommand(a *app) *cobra.Command {
 			}
 
 			var rows []messageRow
+			rootCount := 0
 			for message, msgErr := range client.ChannelMessages(ctx, teams.TeamID(args[0]), teams.ChannelID(args[1]), query) {
 				if msgErr != nil {
 					return explainAuthError(msgErr)
 				}
 				rows = append(rows, messageRowOf(message))
+				rootCount++
 				if replies {
 					for i := range message.Replies {
 						rows = append(rows, messageRowOf(message.Replies[i]))
 					}
+					for reply, replyErr := range client.MoreReplies(ctx, message) {
+						if replyErr != nil {
+							return explainAuthError(replyErr)
+						}
+						rows = append(rows, messageRowOf(reply))
+					}
 				}
-				if limit > 0 && len(rows) >= limit {
+				if limit > 0 && rootCount >= limit {
 					break
 				}
 			}
@@ -168,8 +175,7 @@ func newChannelReadCommand(a *app) *cobra.Command {
 
 	flags := cmd.Flags()
 	flags.IntVarP(&limit, "limit", "n", 25, "maximum root messages to show; 0 means no limit")
-	flags.BoolVar(&replies, "replies", false,
-		"also show each root message's first page of replies; a long thread is truncated with no indication here")
+	flags.BoolVar(&replies, "replies", false, "also show every reply to each selected root message")
 	return cmd
 }
 

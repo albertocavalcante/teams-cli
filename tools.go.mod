@@ -8,24 +8,15 @@ tool (
 	gotest.tools/gotestsum
 )
 
-// teams-cli is not published anywhere -- it lives only on this machine, next
-// to its sibling SDKs -- so `go mod tidy -modfile=tools.go.mod` cannot
-// resolve it (or them) from a real module proxy the way outlook-cli's own
-// tools.go.mod resolves an already-tagged outlook-cli release. These mirror
-// the replace directives in the main go.mod.
+// The tools module imports the local CLI for analysis without depending on
+// a previously published release of the CLI itself.
 replace github.com/albertocavalcante/teams-cli => ./
-
-replace github.com/albertocavalcante/msauth-go => ../msauth-go
-
-replace github.com/albertocavalcante/msgraph-go => ../msgraph-go
-
-replace github.com/albertocavalcante/teams-go => ../teams-go
 
 require (
 	github.com/albertocavalcante/msauth-go v0.3.1
 	github.com/albertocavalcante/msgraph-go v0.13.0
 	github.com/albertocavalcante/teams-cli v0.0.0-00010101000000-000000000000
-	github.com/albertocavalcante/teams-go v0.1.0
+	github.com/albertocavalcante/teams-go v0.1.1
 	github.com/spf13/cobra v1.10.2
 )
 

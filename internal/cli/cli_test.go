@@ -30,6 +30,10 @@ type capture struct {
 // It returns stdout, stderr, the requests the server saw, and the command
 // error.
 func runCLI(t *testing.T, handler func(*capture) (int, string), args ...string) (stdout, stderr string, seen []capture, err error) {
+	return runCLIWithScopes(t, defaultScopes, handler, args...)
+}
+
+func runCLIWithScopes(t *testing.T, scopes []string, handler func(*capture) (int, string), args ...string) (stdout, stderr string, seen []capture, err error) {
 	t.Helper()
 
 	var mu sync.Mutex
@@ -57,7 +61,7 @@ func runCLI(t *testing.T, handler func(*capture) (int, string), args ...string) 
 		// The sign-in the CLI performs by default, so a capability check in
 		// tests describes a realistic grant rather than an empty one.
 		grantedScopes: func(context.Context, *app) ([]string, error) {
-			return append([]string(nil), defaultScopes...), nil
+			return append([]string(nil), scopes...), nil
 		},
 	}
 	root := newRootCommand(testApp)
@@ -311,6 +315,47 @@ func TestJSONAndTableRenderTheSameRows(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestChannelReadFollowsRepliesAndLimitsRoots(t *testing.T) {
+	const messagesPath = "/teams/t/channels/c/messages"
+	const repliesPath = messagesPath + "/1/replies"
+	handler := func(c *capture) (int, string) {
+		switch c.Path {
+		case messagesPath:
+			return http.StatusOK, `{"value":[
+				{"id":"1","body":{"contentType":"text","content":"root one"},
+				 "replies":[{"id":"r1","body":{"contentType":"text","content":"first reply"}}],
+				 "replies@odata.nextLink":"` + repliesPath + `?$skiptoken=rest"},
+				{"id":"2","body":{"contentType":"text","content":"root two"}},
+				{"id":"3","body":{"contentType":"text","content":"root three"}}
+			]}`
+		case repliesPath:
+			return http.StatusOK, `{"value":[{"id":"r2","body":{"contentType":"text","content":"last reply"}}]}`
+		default:
+			return http.StatusNotFound, `{}`
+		}
+	}
+
+	stdout, _, seen, err := runCLIWithScopes(t, append(append([]string(nil), defaultScopes...), "ChannelMessage.Read.All"), handler,
+		"channel", "read", "t", "c", "--replies", "--limit", "2", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []messageRow
+	if err := json.Unmarshal([]byte(stdout), &rows); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	if got, want := strings.Join(ids, ","), "1,r1,r2,2"; got != want {
+		t.Fatalf("message ids = %q, want %q", got, want)
+	}
+	if len(seen) != 2 || seen[0].Path != messagesPath || seen[1].Path != repliesPath {
+		t.Fatalf("requests = %+v, want the root page and its reply continuation", seen)
+	}
 }
 
 // An empty --authority must become the work/school endpoint: left at
