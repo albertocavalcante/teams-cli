@@ -119,7 +119,7 @@ func newChannelReadCommand(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "read <team-id> <channel-id>",
 		Short: "Read a channel's messages",
-		Long: "Read a channel's root messages, newest first.\n\n" +
+		Long: "Read a channel's root messages, ordered by the latest change to each thread.\n\n" +
 			"This returns root messages only, however far the listing pages: a\n" +
 			"reply never appears here unless --replies is given. --replies\n" +
 			"includes every reply to each selected root message, following the\n" +
@@ -139,8 +139,8 @@ func newChannelReadCommand(a *app) *cobra.Command {
 			}
 
 			query := teams.ChannelMessageQuery{
-				MessageQuery: teams.MessageQuery{Top: teams.MaxMessagePageSize},
-				WithReplies:  replies,
+				Top:         teams.MaxMessagePageSize,
+				WithReplies: replies,
 			}
 
 			var rows []messageRow

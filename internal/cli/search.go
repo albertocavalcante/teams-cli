@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+
 	teams "github.com/albertocavalcante/teams-go"
 	"github.com/spf13/cobra"
 )
@@ -10,7 +12,7 @@ func newSearchCommand(a *app) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "search <query>",
-		Short: "Full-text search across your chat and channel messages",
+		Short: "Search Teams messages available to this sign-in",
 		Long: "Run a full-text message search, in relevance order.\n\n" +
 			"With chat permission alone -- no channel-message permission -- this\n" +
 			"returns chat hits and no channel hits, with nothing in the response\n" +
@@ -28,6 +30,11 @@ func newSearchCommand(a *app) *cobra.Command {
 			client, err := a.clientFor(ctx, teams.SearchMessages)
 			if err != nil {
 				return err
+			}
+			if granted, grantErr := a.granted(ctx); grantErr != nil {
+				fmt.Fprintln(a.err, "Warning: channel search coverage could not be verified.")
+			} else if !teams.Granted(granted, teams.ReadChannelMessages) {
+				fmt.Fprintln(a.err, "Warning: search may be incomplete: this sign-in lacks channel-message read permission.")
 			}
 
 			var rows []searchRow

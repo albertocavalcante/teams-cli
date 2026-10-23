@@ -6,17 +6,17 @@ build:
     go build ./...
 
 test:
-    go tool -modfile=tools.go.mod gotestsum --format pkgname-and-test-fails -- ./...
+    go tool -modfile=ci-tools/go.mod gotestsum --format pkgname-and-test-fails -- ./...
 
 test-race:
-    go tool -modfile=tools.go.mod gotestsum --format pkgname-and-test-fails -- -race ./...
+    go tool -modfile=ci-tools/go.mod gotestsum --format pkgname-and-test-fails -- -race ./...
 
 test-cover:
-    go tool -modfile=tools.go.mod gotestsum --format pkgname-and-test-fails -- -coverprofile=coverage.out ./...
+    go tool -modfile=ci-tools/go.mod gotestsum --format pkgname-and-test-fails -- -coverprofile=coverage.out ./...
     go tool cover -html=coverage.out -o coverage.html
 
 lint:
-    go tool -modfile=tools.go.mod golangci-lint run --timeout=5m
+    go tool -modfile=ci-tools/go.mod golangci-lint run --timeout=5m
 
 fmt:
     gofmt -w .
@@ -32,6 +32,9 @@ tidy:
 
 tidy-tools:
     go mod tidy -modfile=tools.go.mod
+
+tidy-ci-tools:
+    (cd ci-tools && go mod tidy)
 
 ci: fmt-check vet test-race lint
 
