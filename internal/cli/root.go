@@ -435,6 +435,19 @@ func newRootCommand(a *app) *cobra.Command {
 		}, "\n"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Flags().Lookup("limit") == nil {
+				return nil
+			}
+			limit, err := cmd.Flags().GetInt("limit")
+			if err != nil {
+				return err
+			}
+			if limit < 0 {
+				return fmt.Errorf("invalid --limit %d: use 0 for no limit", limit)
+			}
+			return nil
+		},
 		// Without this, a typo like "teams chatz" silently runs the root help.
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()

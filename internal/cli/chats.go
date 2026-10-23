@@ -155,7 +155,8 @@ func newChatReadCommand(a *app) *cobra.Command {
 			"rather than when it was sent -- which also moves when someone reacts to\n" +
 			"it, edits it, or soft-deletes it. That makes it useful for polling what\n" +
 			"changed since a previous read, and the wrong choice for building a\n" +
-			"transcript, which --order created (the default) is for.",
+			"transcript, which --order created (the default) is for. JSON output\n" +
+			"shows creation as time and, when available, modifiedTime separately.",
 		Example: strings.Join([]string{
 			"  teams chat read 19:abc...@thread.v2",
 			"  teams chat read 19:abc...@thread.v2 --since 24h",
