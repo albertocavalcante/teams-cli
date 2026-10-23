@@ -135,12 +135,13 @@ func writeChatTable(w io.Writer, rows []chatRow) error {
 // table's alignment for a column most output never uses. --json still
 // carries it, for the commands (react, rm) that do need it.
 type messageRow struct {
-	ID      string    `json:"id"`
-	Time    time.Time `json:"time"`
-	Sender  string    `json:"sender"`
-	Text    string    `json:"text"`
-	Edited  bool      `json:"edited,omitempty"`
-	Deleted bool      `json:"deleted,omitempty"`
+	ID           string    `json:"id"`
+	Time         time.Time `json:"time"`
+	ModifiedTime time.Time `json:"modifiedTime,omitzero"`
+	Sender       string    `json:"sender"`
+	Text         string    `json:"text"`
+	Edited       bool      `json:"edited,omitempty"`
+	Deleted      bool      `json:"deleted,omitempty"`
 }
 
 func messageRowOf(message teams.ChatMessage) messageRow {
@@ -149,12 +150,13 @@ func messageRowOf(message teams.ChatMessage) messageRow {
 		sender = "system"
 	}
 	return messageRow{
-		ID:      message.ID.String(),
-		Time:    message.CreatedDateTime,
-		Sender:  sender,
-		Text:    message.PlainText(),
-		Edited:  message.Edited(),
-		Deleted: message.Deleted(),
+		ID:           message.ID.String(),
+		Time:         message.CreatedDateTime,
+		ModifiedTime: message.LastModifiedDateTime,
+		Sender:       sender,
+		Text:         message.PlainText(),
+		Edited:       message.Edited(),
+		Deleted:      message.Deleted(),
 	}
 }
 

@@ -101,6 +101,30 @@ func fakeClients(baseURL string) func(context.Context, *app, []string) (*msauth.
 
 func nothingHandler(*capture) (int, string) { return http.StatusOK, `{}` }
 
+func TestNegativeLimitFailsBeforeGraphRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"chats", []string{"chats", "--limit=-1"}},
+		{"chat read", []string{"chat", "read", "c", "--limit=-1"}},
+		{"search", []string{"search", "term", "--limit=-1"}},
+		{"teams", []string{"teams", "--limit=-1"}},
+		{"channel read", []string{"channel", "read", "t", "c", "--limit=-1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, seen, err := runCLI(t, nothingHandler, tt.args...)
+			if err == nil || !strings.Contains(err.Error(), "--limit") {
+				t.Fatalf("err = %v, want a --limit validation error", err)
+			}
+			if len(seen) != 0 {
+				t.Fatalf("Graph saw %d requests, want none", len(seen))
+			}
+		})
+	}
+}
+
 // Every runnable command should carry an example; they are the docs people
 // actually read, and the ones a caller pastes and edits.
 func TestEveryCommandHasAnExample(t *testing.T) {
@@ -378,6 +402,35 @@ func TestChatReadSinceKeepsOnlyRecentMessages(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].ID != "recent" {
 		t.Fatalf("rows = %+v, want only recent", rows)
+	}
+}
+
+func TestChatReadModifiedWindowShowsModificationTime(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	created := now.Add(-48 * time.Hour)
+	modified := now.Add(-time.Hour)
+	handler := func(*capture) (int, string) {
+		return http.StatusOK, fmt.Sprintf(`{"value":[
+			{"id":"changed","createdDateTime":%q,"lastModifiedDateTime":%q,
+			"body":{"contentType":"text","content":"changed"}}
+		]}`, created.Format(time.RFC3339), modified.Format(time.RFC3339))
+	}
+	stdout, _, _, err := runCLI(t, handler,
+		"chat", "read", "c", "--order", "modified", "--since", "24h", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []struct {
+		ID           string    `json:"id"`
+		Time         time.Time `json:"time"`
+		ModifiedTime time.Time `json:"modifiedTime"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != "changed" ||
+		!rows[0].Time.Equal(created) || !rows[0].ModifiedTime.Equal(modified) {
+		t.Fatalf("rows = %+v, want both creation and modification timestamps", rows)
 	}
 }
 
