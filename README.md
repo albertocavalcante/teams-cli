@@ -28,7 +28,7 @@ teams presence
 
 `teams channel read` lists root messages by each thread's latest change. `--replies` includes every reply for each selected root, following the thread's continuation links. `--limit` counts roots. `teams search` warns when its results may omit channels because the sign-in lacks channel-message read permission. `--json` emits structured output, and `--dry-run` previews commands that change data. Every command has examples in `--help`.
 
-Message JSON uses `time` for creation and includes `modifiedTime` when Graph provides it, so the timestamp used by `chat read --order modified --since` is visible.
+Message JSON uses `time` for creation and includes `modifiedTime` when Graph provides it, so the timestamp used by `chat read --order modified --since` is visible. Channel replies include `replyToId` to identify their root.
 
 The CLI currently covers chat and channel messaging, members, search, reactions, soft deletion, and presence. Creating chats, managing teams or channels, hosted content, meetings, calls, tabs, and Shifts are outside the current command surface.
 

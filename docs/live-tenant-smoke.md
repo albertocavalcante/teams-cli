@@ -34,7 +34,7 @@ output only to a private local location if it must be inspected in detail.
 | Chat window | `teams chat read <chat-id> --since 24h --limit 0 --json` | Every returned message is within the requested created-time window; a known older message is absent. |
 | Modified window | `teams chat read <chat-id> --order modified --since 24h --limit 0 --json` | Every returned `modifiedTime` is within the window, including a known changed older message if available. `time` remains its creation time. |
 | Channel roots | `teams channel read <team-id> <channel-id> --limit 2 --json` | At most two roots are returned; replies are absent. |
-| Channel replies | `teams channel read <team-id> <channel-id> --limit 2 --replies --json` | The same root limit applies and all visible replies to those roots appear. A thread over 200 replies exercises `replies@odata.nextLink`. |
+| Channel replies | `teams channel read <team-id> <channel-id> --limit 2 --replies --json` | At most two rows lack `replyToId`; reply rows name the selected root in `replyToId`, and all visible replies to those roots appear. A thread over 200 replies exercises `replies@odata.nextLink`. |
 | Search | `teams search '<distinctive known phrase>' --limit 0 --json` | JSON remains an array. With only chat permission, stderr warns that channel coverage may be incomplete. With channel permission, the known indexed channel hit is present. |
 
 Search indexing may lag writes, so use a stable, already indexed phrase rather

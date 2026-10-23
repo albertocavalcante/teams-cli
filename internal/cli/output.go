@@ -136,6 +136,7 @@ func writeChatTable(w io.Writer, rows []chatRow) error {
 // carries it, for the commands (react, rm) that do need it.
 type messageRow struct {
 	ID           string    `json:"id"`
+	ReplyToID    string    `json:"replyToId,omitempty"`
 	Time         time.Time `json:"time"`
 	ModifiedTime time.Time `json:"modifiedTime,omitzero"`
 	Sender       string    `json:"sender"`
@@ -151,6 +152,7 @@ func messageRowOf(message teams.ChatMessage) messageRow {
 	}
 	return messageRow{
 		ID:           message.ID.String(),
+		ReplyToID:    message.ReplyToID.String(),
 		Time:         message.CreatedDateTime,
 		ModifiedTime: message.LastModifiedDateTime,
 		Sender:       sender,

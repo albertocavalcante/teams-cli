@@ -351,13 +351,13 @@ func TestChannelReadFollowsRepliesAndLimitsRoots(t *testing.T) {
 		case messagesPath:
 			return http.StatusOK, `{"value":[
 				{"id":"1","body":{"contentType":"text","content":"root one"},
-				 "replies":[{"id":"r1","body":{"contentType":"text","content":"first reply"}}],
+				 "replies":[{"id":"r1","replyToId":"1","body":{"contentType":"text","content":"first reply"}}],
 				 "replies@odata.nextLink":"` + repliesPath + `?$skiptoken=rest"},
 				{"id":"2","body":{"contentType":"text","content":"root two"}},
 				{"id":"3","body":{"contentType":"text","content":"root three"}}
 			]}`
 		case repliesPath:
-			return http.StatusOK, `{"value":[{"id":"r2","body":{"contentType":"text","content":"last reply"}}]}`
+			return http.StatusOK, `{"value":[{"id":"r2","replyToId":"1","body":{"contentType":"text","content":"last reply"}}]}`
 		default:
 			return http.StatusNotFound, `{}`
 		}
@@ -368,7 +368,10 @@ func TestChannelReadFollowsRepliesAndLimitsRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rows []messageRow
+	var rows []struct {
+		ID        string `json:"id"`
+		ReplyToID string `json:"replyToId"`
+	}
 	if err := json.Unmarshal([]byte(stdout), &rows); err != nil {
 		t.Fatal(err)
 	}
@@ -378,6 +381,10 @@ func TestChannelReadFollowsRepliesAndLimitsRoots(t *testing.T) {
 	}
 	if got, want := strings.Join(ids, ","), "1,r1,r2,2"; got != want {
 		t.Fatalf("message ids = %q, want %q", got, want)
+	}
+	if rows[0].ReplyToID != "" || rows[1].ReplyToID != "1" ||
+		rows[2].ReplyToID != "1" || rows[3].ReplyToID != "" {
+		t.Fatalf("reply parent ids = %+v, want root/reply association", rows)
 	}
 	if len(seen) != 2 || seen[0].Path != messagesPath || seen[1].Path != repliesPath {
 		t.Fatalf("requests = %+v, want the root page and its reply continuation", seen)
