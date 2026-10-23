@@ -4,8 +4,8 @@ go 1.26
 
 require (
 	github.com/albertocavalcante/msauth-go v0.3.1
-	github.com/albertocavalcante/msgraph-go v0.13.0
-	github.com/albertocavalcante/teams-go v0.1.1
+	github.com/albertocavalcante/msgraph-go v0.13.1
+	github.com/albertocavalcante/teams-go v0.1.2
 	github.com/spf13/cobra v1.10.2
 )
 

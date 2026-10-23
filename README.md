@@ -26,7 +26,7 @@ teams presence
 
 `teams scopes` shows what the current sign-in permits. Chat reads and sends can use delegated permissions a user can consent to. Several team, channel, and other-user presence reads require tenant administrator consent; the CLI names the missing permission instead of repeating a sign-in that cannot grant it.
 
-`teams channel read` lists root messages. `--replies` includes every reply for each selected root, following the thread's continuation links. `--limit` counts roots. `--json` emits structured output, and `--dry-run` previews commands that change data. Every command has examples in `--help`.
+`teams channel read` lists root messages by each thread's latest change. `--replies` includes every reply for each selected root, following the thread's continuation links. `--limit` counts roots. `teams search` warns when its results may omit channels because the sign-in lacks channel-message read permission. `--json` emits structured output, and `--dry-run` previews commands that change data. Every command has examples in `--help`.
 
 The CLI currently covers chat and channel messaging, members, search, reactions, soft deletion, and presence. Creating chats, managing teams or channels, hosted content, meetings, calls, tabs, and Shifts are outside the current command surface.
 

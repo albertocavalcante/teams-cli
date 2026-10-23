@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	msauth "github.com/albertocavalcante/msauth-go"
 	msgraph "github.com/albertocavalcante/msgraph-go"
@@ -355,6 +357,53 @@ func TestChannelReadFollowsRepliesAndLimitsRoots(t *testing.T) {
 	}
 	if len(seen) != 2 || seen[0].Path != messagesPath || seen[1].Path != repliesPath {
 		t.Fatalf("requests = %+v, want the root page and its reply continuation", seen)
+	}
+}
+
+func TestChatReadSinceKeepsOnlyRecentMessages(t *testing.T) {
+	now := time.Now().UTC()
+	handler := func(*capture) (int, string) {
+		return http.StatusOK, fmt.Sprintf(`{"value":[
+			{"id":"recent","createdDateTime":%q,"body":{"contentType":"text","content":"recent"}},
+			{"id":"old","createdDateTime":%q,"body":{"contentType":"text","content":"old"}}
+		]}`, now.Add(-time.Hour).Format(time.RFC3339), now.Add(-48*time.Hour).Format(time.RFC3339))
+	}
+	stdout, _, _, err := runCLI(t, handler, "chat", "read", "c", "--since", "24h", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []messageRow
+	if err := json.Unmarshal([]byte(stdout), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != "recent" {
+		t.Fatalf("rows = %+v, want only recent", rows)
+	}
+}
+
+func TestSearchDisclosesMissingChannelCoverage(t *testing.T) {
+	searchResponse := func(*capture) (int, string) {
+		return http.StatusOK, `{"value":[{"hitsContainers":[{"hits":[],"moreResultsAvailable":false}]}]}`
+	}
+	stdout, stderr, _, err := runCLI(t, searchResponse, "search", "budget", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(stdout) != "[]" {
+		t.Fatalf("JSON = %q, want []", stdout)
+	}
+	if !strings.Contains(stderr, "channel") || !strings.Contains(stderr, "incomplete") {
+		t.Fatalf("warning = %q, want incomplete channel coverage", stderr)
+	}
+
+	_, stderr, _, err = runCLIWithScopes(t,
+		append(append([]string(nil), defaultScopes...), "ChannelMessage.Read.All"),
+		searchResponse, "search", "budget", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stderr != "" {
+		t.Fatalf("warning with channel permission = %q, want none", stderr)
 	}
 }
 
