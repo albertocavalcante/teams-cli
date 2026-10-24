@@ -42,3 +42,5 @@ just ci
 
 The local tests use a fake Graph server. Live tenant checks are still needed for service compatibility, especially for administrator-granted channel operations.
 Use the [live tenant smoke check](docs/live-tenant-smoke.md) when a suitable account is available.
+Commit subjects use Conventional Commits and a 72-character maximum; Lefthook
+and CI enforce the same rule through `scripts/check-commit-subjects.sh`.
