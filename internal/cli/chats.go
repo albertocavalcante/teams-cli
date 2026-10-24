@@ -179,7 +179,12 @@ func newChatReadCommand(a *app) *cobra.Command {
 
 			ctx, cancel := a.context(cmd)
 			defer cancel()
-			client, err := a.clientFor(ctx, teams.ReadChatMessages)
+			var client *teams.Client
+			if a.localProfile != "" {
+				client, err = a.localTeamsClient()
+			} else {
+				client, err = a.clientFor(ctx, teams.ReadChatMessages)
+			}
 			if err != nil {
 				return err
 			}

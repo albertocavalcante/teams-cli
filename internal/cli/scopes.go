@@ -36,7 +36,7 @@ type capabilityStatus struct {
 }
 
 func localCapabilityAvailable(capability teams.Capability) bool {
-	return capability == teams.ReadIdentity || capability == teams.ListChats
+	return capability == teams.ReadIdentity || capability == teams.ListChats || capability == teams.ReadChatMessages
 }
 
 // Local365's /me route accepts additional directory scopes that the Teams
