@@ -17,6 +17,7 @@ import (
 	"time"
 
 	msgraph "github.com/albertocavalcante/msgraph-go"
+	teams "github.com/albertocavalcante/teams-go"
 	"github.com/spf13/cobra"
 )
 
@@ -68,8 +69,8 @@ func validateLocalCommand(cmd *cobra.Command) error {
 			return fmt.Errorf("--local-profile cannot be combined with --%s", name)
 		}
 	}
-	if cmd.Name() != "whoami" && cmd.Name() != "scopes" {
-		return fmt.Errorf("local profile currently supports only whoami and scopes; %q is not available locally yet", cmd.CommandPath())
+	if cmd.Name() != "whoami" && cmd.Name() != "scopes" && cmd.Name() != "chats" {
+		return fmt.Errorf("local profile currently supports only whoami, scopes, and chats; %q is not available locally yet", cmd.CommandPath())
 	}
 	return nil
 }
@@ -248,17 +249,37 @@ func (a *app) loadLocalSession(ctx context.Context) (localSession, error) {
 	return getLocalSession(ctx, localHTTPClient(base), base, token)
 }
 
+func newLocalGraphClient(base *url.URL, token string, httpClient *http.Client) (*msgraph.Client, error) {
+	graph, err := msgraph.New(msgraph.TokenSourceFunc(func(context.Context) (string, error) {
+		return token, nil
+	}), msgraph.WithBaseURL(base.String()), msgraph.WithHTTPClient(httpClient))
+	if err != nil {
+		return nil, fmt.Errorf("configure local Graph client: %w", err)
+	}
+	return graph, nil
+}
+
+func (a *app) localTeamsClient() (*teams.Client, error) {
+	base, token, err := loadLocalProfile(a.localProfile)
+	if err != nil {
+		return nil, err
+	}
+	graph, err := newLocalGraphClient(base, token, localHTTPClient(base))
+	if err != nil {
+		return nil, err
+	}
+	return teams.New(graph)
+}
+
 func (a *app) localWhoami(ctx context.Context) (localWhoamiResult, error) {
 	base, token, err := loadLocalProfile(a.localProfile)
 	if err != nil {
 		return localWhoamiResult{}, err
 	}
 	httpClient := localHTTPClient(base)
-	graph, err := msgraph.New(msgraph.TokenSourceFunc(func(context.Context) (string, error) {
-		return token, nil
-	}), msgraph.WithBaseURL(base.String()), msgraph.WithHTTPClient(httpClient))
+	graph, err := newLocalGraphClient(base, token, httpClient)
 	if err != nil {
-		return localWhoamiResult{}, fmt.Errorf("configure local Graph client: %w", err)
+		return localWhoamiResult{}, err
 	}
 	var me localMe
 	if _, err := graph.Get(ctx, "/me", msgraph.Params{}, &me); err != nil {

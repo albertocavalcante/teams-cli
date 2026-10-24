@@ -134,8 +134,9 @@ func TestLocalProfileFailsClosedForOtherCommandsAndAuthFlags(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"--local-profile", profile, "chats"}, "currently supports only whoami"},
+		{[]string{"--local-profile", profile, "chat", "read", "chat-1"}, "currently supports only"},
 		{[]string{"--local-profile", profile, "teams"}, "currently supports only"},
+		{[]string{"--local-profile", profile, "chats", "--authority", "https://login.microsoftonline.com/common"}, "cannot be combined"},
 		{[]string{"--local-profile", profile, "whoami", "--authority", "https://login.microsoftonline.com/common"}, "cannot be combined"},
 		{[]string{"--local-profile", profile, "whoami", "--token-cache-dir", t.TempDir()}, "cannot be combined"},
 	} {
@@ -143,6 +144,134 @@ func TestLocalProfileFailsClosedForOtherCommandsAndAuthFlags(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Fatalf("%v: err = %v, want %q", test.args, err, test.want)
 		}
+	}
+}
+
+func TestLocalChatsUsesSDKQueryAndRendersActorView(t *testing.T) {
+	var seen atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+testLocalToken {
+			t.Errorf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1.0/me":
+			if r.Method != http.MethodGet || r.URL.Query().Get("$select") != "id" {
+				t.Errorf("self request = %s %s", r.Method, r.URL.String())
+			}
+			_, _ = fmt.Fprint(w, `{"id":"ada"}`)
+		case "/v1.0/chats":
+			seen.Add(1)
+			query := r.URL.Query()
+			if r.Method != http.MethodGet || query.Get("$expand") != "members,lastMessagePreview" || query.Get("$orderby") != "lastMessagePreview/createdDateTime desc" || query.Get("$top") != "50" || len(query) != 3 {
+				t.Errorf("chat request = %s %s", r.Method, r.URL.String())
+			}
+			_, _ = fmt.Fprint(w, `{"value":[{"id":"chat-unread","chatType":"oneOnOne","topic":null,"members":[{"userId":"ada","displayName":"Ada"},{"userId":"grace","displayName":"Grace"}],"viewpoint":{"lastMessageReadDateTime":"2026-01-01T00:00:00Z"},"lastMessagePreview":{"createdDateTime":"2026-01-02T00:00:00Z","body":{"contentType":"text","content":"Hi Ada"}}},{"id":"chat-read","chatType":"group","topic":"Planning","viewpoint":{"lastMessageReadDateTime":"2026-01-03T00:00:00Z"},"lastMessagePreview":{"createdDateTime":"2026-01-02T00:00:00Z","body":{"contentType":"text","content":"Done"}}}]}`)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	profile := localTestProfile(t, server.URL+"/v1.0")
+
+	out, err := runLocalCLI(t, "--local-profile", profile, "chats", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []chatRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].ID != "chat-unread" || rows[0].Name != "Grace" || rows[0].Preview != "Hi Ada" || rows[0].Unread == nil || !*rows[0].Unread || rows[1].Name != "Planning" || rows[1].Unread == nil || *rows[1].Unread {
+		t.Fatalf("chats = %+v", rows)
+	}
+	out, err = runLocalCLI(t, "--local-profile", profile, "chats", "--unread", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != "chat-unread" {
+		t.Fatalf("unread chats = %+v", rows)
+	}
+	if seen.Load() != 2 {
+		t.Fatalf("chat listing requests = %d, want 2", seen.Load())
+	}
+}
+
+func TestLocalChatsDeniedWithoutGrant(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1.0/me" {
+			_, _ = fmt.Fprint(w, `{"id":"ada"}`)
+			return
+		}
+		if r.URL.Path != "/v1.0/chats" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprint(w, `{"error":{"code":"Local365_Forbidden","message":"Chat.Read is required"}}`)
+	}))
+	t.Cleanup(server.Close)
+	profile := localTestProfile(t, server.URL+"/v1.0")
+	_, err := runLocalCLI(t, "--local-profile", profile, "chats")
+	if err == nil || !strings.Contains(err.Error(), "Chat.Read") {
+		t.Fatalf("chats error = %v, want denied grant", err)
+	}
+}
+
+func TestLocalChatsRejectsRemoteNextLink(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1.0/me" {
+			_, _ = fmt.Fprint(w, `{"id":"ada"}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"value":[{"id":"chat-1","chatType":"group","topic":"Planning"}],"@odata.nextLink":"http://example.invalid/v1.0/chats?page=2"}`)
+	}))
+	t.Cleanup(server.Close)
+	profile := localTestProfile(t, server.URL+"/v1.0")
+	_, err := runLocalCLI(t, "--local-profile", profile, "chats", "--all")
+	if err == nil || !strings.Contains(err.Error(), "untrusted request host") {
+		t.Fatalf("chats error = %v, want remote continuation refused", err)
+	}
+}
+
+func TestLocalChatsFollowsLocalNextLink(t *testing.T) {
+	var pages atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1.0/me" {
+			_, _ = fmt.Fprint(w, `{"id":"ada"}`)
+			return
+		}
+		if r.URL.Path != "/v1.0/chats" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		pages.Add(1)
+		if r.URL.Query().Get("$skiptoken") == "page-2" {
+			_, _ = fmt.Fprint(w, `{"value":[{"id":"chat-2","chatType":"group","topic":"Second"}]}`)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"value":[{"id":"chat-1","chatType":"group","topic":"First"}],"@odata.nextLink":%q}`, server.URL+"/v1.0/chats?$skiptoken=page-2")
+	}))
+	t.Cleanup(server.Close)
+	profile := localTestProfile(t, server.URL+"/v1.0")
+	out, err := runLocalCLI(t, "--local-profile", profile, "chats", "--all", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []chatRow
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].Name != "First" || rows[1].Name != "Second" || pages.Load() != 2 {
+		t.Fatalf("paged chats = %+v; requests = %d", rows, pages.Load())
 	}
 }
 
@@ -192,10 +321,10 @@ func TestLocalScopesUsesSessionGrants(t *testing.T) {
 			t.Fatalf("local capability %q incorrectly needs Microsoft admin consent", capability.Name)
 		}
 	}
-	if !status[string(teams.ReadIdentity)] || !status[string(teams.ListChats)] || status[string(teams.ReadChatMessages)] || status[string(teams.SendChatMessage)] {
+	if !status[string(teams.ReadIdentity)] || status[string(teams.ListChats)] || status[string(teams.ReadChatMessages)] || status[string(teams.SendChatMessage)] {
 		t.Fatalf("capability statuses = %v", status)
 	}
-	if !available[string(teams.ReadIdentity)] || available[string(teams.ListChats)] || available[string(teams.SendChatMessage)] {
+	if !available[string(teams.ReadIdentity)] || !available[string(teams.ListChats)] || available[string(teams.SendChatMessage)] {
 		t.Fatalf("local availability = %v", available)
 	}
 	if seen.Load() != 1 {
@@ -203,10 +332,10 @@ func TestLocalScopesUsesSessionGrants(t *testing.T) {
 	}
 }
 
-func TestLocalScopesWantGrantedButUnavailable(t *testing.T) {
+func TestLocalScopesWantGrantedAndAvailable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"tenantId":"tenant","userId":"grace","expiresOn":%q,"grantedScopes":["User.Read","Chat.Read"]}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+		_, _ = fmt.Fprintf(w, `{"tenantId":"tenant","userId":"grace","expiresOn":%q,"grantedScopes":["User.Read","chat.read"]}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
 	}))
 	t.Cleanup(server.Close)
 	profile := localTestProfile(t, server.URL+"/v1.0")
@@ -231,8 +360,45 @@ func TestLocalScopesWantGrantedButUnavailable(t *testing.T) {
 	}
 	for _, capability := range report.Capabilities {
 		if capability.Name == string(teams.ListChats) {
-			if !capability.Permitted || capability.AvailableLocally == nil || *capability.AvailableLocally {
-				t.Fatalf("list chats = %+v, want granted but unavailable locally", capability)
+			if !capability.Permitted || capability.AvailableLocally == nil || !*capability.AvailableLocally {
+				t.Fatalf("list chats = %+v, want granted and available locally", capability)
+			}
+			return
+		}
+	}
+	t.Fatal("list chats missing from capability report")
+}
+
+func TestLocalScopesBasicChatGrantDoesNotClaimRunnableChats(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"tenantId":"tenant","userId":"ada","expiresOn":%q,"grantedScopes":["User.Read","Chat.ReadBasic"]}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+	}))
+	t.Cleanup(server.Close)
+	profile := localTestProfile(t, server.URL+"/v1.0")
+	out, err := runLocalCLI(t, "--local-profile", profile, "scopes", "--want", string(teams.ListChats), "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		LocalGrantHint string `json:"localGrantHint"`
+		Capabilities   []struct {
+			Name             string   `json:"capability"`
+			Permitted        bool     `json:"permitted"`
+			AvailableLocally *bool    `json:"availableLocally"`
+			Accepts          []string `json:"satisfiedBy"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.LocalGrantHint == "" {
+		t.Fatalf("missing local grant hint: %+v", report)
+	}
+	for _, capability := range report.Capabilities {
+		if capability.Name == string(teams.ListChats) {
+			if capability.Permitted || capability.AvailableLocally == nil || !*capability.AvailableLocally || slices.Contains(capability.Accepts, "Chat.ReadBasic") || !slices.Contains(capability.Accepts, "Chat.Read") {
+				t.Fatalf("basic-only list chats report = %+v", capability)
 			}
 			return
 		}

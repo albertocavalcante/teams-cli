@@ -36,7 +36,7 @@ type capabilityStatus struct {
 }
 
 func localCapabilityAvailable(capability teams.Capability) bool {
-	return capability == teams.ReadIdentity
+	return capability == teams.ReadIdentity || capability == teams.ListChats
 }
 
 // Local365's /me route accepts additional directory scopes that the Teams
@@ -52,23 +52,34 @@ var localIdentityScopes = []string{
 	"Directory.ReadWrite.All",
 }
 
+// Local chats requests a message preview. Chat.ReadBasic can list basic chat
+// metadata through Local365, but cannot run that CLI query locally.
+var localChatListScopes = []string{"Chat.Read", "Chat.ReadWrite"}
+
 func localCapabilityGranted(granted []string, capability teams.Capability) bool {
-	if capability != teams.ReadIdentity {
+	switch capability {
+	case teams.ReadIdentity, teams.ListChats:
+		accepted := localCapabilityScopes(capability)
+		for _, scope := range granted {
+			if slices.ContainsFunc(accepted, func(candidate string) bool { return strings.EqualFold(candidate, scope) }) {
+				return true
+			}
+		}
+		return false
+	default:
 		return teams.Granted(granted, capability)
 	}
-	for _, scope := range granted {
-		if slices.Contains(localIdentityScopes, scope) {
-			return true
-		}
-	}
-	return false
 }
 
 func localCapabilityScopes(capability teams.Capability) []string {
-	if capability == teams.ReadIdentity {
+	switch capability {
+	case teams.ReadIdentity:
 		return slices.Clone(localIdentityScopes)
+	case teams.ListChats:
+		return slices.Clone(localChatListScopes)
+	default:
+		return teams.ScopesFor(capability)
 	}
-	return teams.ScopesFor(capability)
 }
 
 func localMissingFor(granted []string, capabilities []teams.Capability) []teams.Capability {
