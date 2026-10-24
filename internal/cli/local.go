@@ -69,8 +69,9 @@ func validateLocalCommand(cmd *cobra.Command) error {
 			return fmt.Errorf("--local-profile cannot be combined with --%s", name)
 		}
 	}
-	if cmd.Name() != "whoami" && cmd.Name() != "scopes" && cmd.Name() != "chats" {
-		return fmt.Errorf("local profile currently supports only whoami, scopes, and chats; %q is not available locally yet", cmd.CommandPath())
+	chatRead := cmd.Name() == "read" && cmd.Parent() != nil && cmd.Parent().Name() == "chat"
+	if cmd.Name() != "whoami" && cmd.Name() != "scopes" && cmd.Name() != "chats" && !chatRead {
+		return fmt.Errorf("local profile currently supports only whoami, scopes, chats, and chat read; %q is not available locally yet", cmd.CommandPath())
 	}
 	return nil
 }

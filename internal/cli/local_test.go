@@ -134,8 +134,10 @@ func TestLocalProfileFailsClosedForOtherCommandsAndAuthFlags(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"--local-profile", profile, "chat", "read", "chat-1"}, "currently supports only"},
+		{[]string{"--local-profile", profile, "chat", "send", "chat-1"}, "currently supports only"},
+		{[]string{"--local-profile", profile, "channel", "read", "team-1", "channel-1"}, "currently supports only"},
 		{[]string{"--local-profile", profile, "teams"}, "currently supports only"},
+		{[]string{"--local-profile", profile, "chat", "read", "chat-1", "--authority", "https://login.microsoftonline.com/common"}, "cannot be combined"},
 		{[]string{"--local-profile", profile, "chats", "--authority", "https://login.microsoftonline.com/common"}, "cannot be combined"},
 		{[]string{"--local-profile", profile, "whoami", "--authority", "https://login.microsoftonline.com/common"}, "cannot be combined"},
 		{[]string{"--local-profile", profile, "whoami", "--token-cache-dir", t.TempDir()}, "cannot be combined"},
@@ -324,7 +326,7 @@ func TestLocalScopesUsesSessionGrants(t *testing.T) {
 	if !status[string(teams.ReadIdentity)] || status[string(teams.ListChats)] || status[string(teams.ReadChatMessages)] || status[string(teams.SendChatMessage)] {
 		t.Fatalf("capability statuses = %v", status)
 	}
-	if !available[string(teams.ReadIdentity)] || !available[string(teams.ListChats)] || available[string(teams.SendChatMessage)] {
+	if !available[string(teams.ReadIdentity)] || !available[string(teams.ListChats)] || !available[string(teams.ReadChatMessages)] || available[string(teams.SendChatMessage)] {
 		t.Fatalf("local availability = %v", available)
 	}
 	if seen.Load() != 1 {
@@ -358,15 +360,18 @@ func TestLocalScopesWantGrantedAndAvailable(t *testing.T) {
 	if report.SignInCommand != "" || report.LocalGrantHint != "" {
 		t.Fatalf("granted capability should have no grant advice: %+v", report)
 	}
+	seen := map[string]bool{}
 	for _, capability := range report.Capabilities {
-		if capability.Name == string(teams.ListChats) {
+		if capability.Name == string(teams.ListChats) || capability.Name == string(teams.ReadChatMessages) {
 			if !capability.Permitted || capability.AvailableLocally == nil || !*capability.AvailableLocally {
-				t.Fatalf("list chats = %+v, want granted and available locally", capability)
+				t.Fatalf("chat capability = %+v, want granted and available locally", capability)
 			}
-			return
+			seen[capability.Name] = true
 		}
 	}
-	t.Fatal("list chats missing from capability report")
+	if !seen[string(teams.ListChats)] || !seen[string(teams.ReadChatMessages)] {
+		t.Fatalf("missing local chat capabilities: %v", seen)
+	}
 }
 
 func TestLocalScopesBasicChatGrantDoesNotClaimRunnableChats(t *testing.T) {
