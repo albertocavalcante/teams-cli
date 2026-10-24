@@ -56,7 +56,13 @@ func newChatsCommand(a *app) *cobra.Command {
 			ctx, cancel := a.context(cmd)
 			defer cancel()
 
-			client, err := a.clientFor(ctx, teams.ListChats)
+			var client *teams.Client
+			var err error
+			if a.localProfile != "" {
+				client, err = a.localTeamsClient()
+			} else {
+				client, err = a.clientFor(ctx, teams.ListChats)
+			}
 			if err != nil {
 				return err
 			}

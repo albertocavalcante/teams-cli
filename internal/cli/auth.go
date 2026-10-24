@@ -127,6 +127,23 @@ func newWhoamiCommand(a *app) *cobra.Command {
 			ctx, cancel := a.context(cmd)
 			defer cancel()
 
+			if a.localProfile != "" {
+				result, err := a.localWhoami(ctx)
+				if err != nil {
+					return err
+				}
+				if a.jsonOut {
+					return writeJSON(a.out, result)
+				}
+				fmt.Fprintf(a.out, "Account:  %s\n", result.Username)
+				fmt.Fprintln(a.out, "Mode:     Local365")
+				fmt.Fprintf(a.out, "User ID:  %s\n", result.UserID)
+				fmt.Fprintf(a.out, "Tenant:   %s\n", result.TenantID)
+				fmt.Fprintf(a.out, "Token:    valid for %s\n", time.Until(result.ExpiresOn).Round(time.Second))
+				fmt.Fprintf(a.out, "Scopes:   %s\n", strings.Join(result.GrantedScopes, ", "))
+				return nil
+			}
+
 			auth, _, err := a.clients(ctx)
 			if err != nil {
 				return err

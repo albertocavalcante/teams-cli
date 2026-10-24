@@ -45,13 +45,14 @@ const defaultAuthority = "https://login.microsoftonline.com/organizations"
 // app holds process-wide options and lazily builds clients, so a command that
 // only prints help never touches the keychain.
 type app struct {
-	scopes    []string
-	clientID  string
-	authority string
-	cacheDir  string
-	timeout   time.Duration
-	jsonOut   bool
-	dryRun    bool
+	scopes       []string
+	clientID     string
+	authority    string
+	cacheDir     string
+	localProfile string
+	timeout      time.Duration
+	jsonOut      bool
+	dryRun       bool
 
 	out io.Writer
 	err io.Writer
@@ -436,6 +437,14 @@ func newRootCommand(a *app) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if flag := cmd.Root().PersistentFlags().Lookup("local-profile"); flag != nil && flag.Changed {
+				if a.localProfile == "" {
+					return errors.New("--local-profile requires a profile file")
+				}
+				if err := validateLocalCommand(cmd); err != nil {
+					return err
+				}
+			}
 			if cmd.Flags().Lookup("limit") == nil {
 				return nil
 			}
@@ -467,6 +476,8 @@ func newRootCommand(a *app) *cobra.Command {
 			"leaving this at that default would fail every sign-in with an error that does not say why.")
 	flags.StringVar(&a.cacheDir, "token-cache-dir", "",
 		"store tokens in an encrypted file in this directory instead of the OS keychain")
+	flags.StringVar(&a.localProfile, "local-profile", "",
+		"use a Local365 profile for supported local commands")
 	flags.DurationVar(&a.timeout, "timeout", 2*time.Minute, "timeout for each command; 0 disables it")
 	flags.BoolVar(&a.jsonOut, "json", false, "emit JSON instead of a table")
 	flags.BoolVar(&a.dryRun, "dry-run", false, "describe what would change without changing anything")

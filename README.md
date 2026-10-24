@@ -26,6 +26,8 @@ teams presence
 
 `teams scopes` shows what the current sign-in permits. Chat reads and sends can use delegated permissions a user can consent to. Several team, channel, and other-user presence reads require tenant administrator consent; the CLI names the missing permission instead of repeating a sign-in that cannot grant it.
 
+With a Local365 profile, `teams --local-profile <profile.json> whoami`, `scopes`, and `chats` use the synthetic persona instead of Microsoft sign-in. Local `scopes` reports both the persona's granted Graph permissions and whether each capability is implemented locally. A grant alone does not make an unfinished local command available. `--want` explains how to change synthetic grants in the Local365 seed; it never suggests `teams login`. Chat message commands and other unfinished commands refuse local mode before reaching Microsoft authentication. Local `chats` expands a message preview and needs `Chat.Read` or `Chat.ReadWrite` in the synthetic persona; `Chat.ReadBasic` alone cannot run that command locally.
+
 `teams channel read` lists root messages by each thread's latest change. `--replies` includes every reply for each selected root, following the thread's continuation links. `--limit` counts roots. `teams search` warns when its results may omit channels because the sign-in lacks channel-message read permission. `--json` emits structured output, and `--dry-run` previews commands that change data. Every command has examples in `--help`.
 
 Message JSON uses `time` for creation and includes `modifiedTime` when Graph provides it, so the timestamp used by `chat read --order modified --since` is visible. Channel replies include `replyToId` to identify their root.
