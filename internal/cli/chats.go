@@ -238,6 +238,9 @@ func newChatSendCommand(a *app) *cobra.Command {
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a.bind(cmd)
+			if a.localProfile != "" && compose.html {
+				return errors.New("Local365 chat send does not support HTML bodies yet")
+			}
 			body, err := compose.itemBody(cmd.InOrStdin())
 			if err != nil {
 				return err
@@ -249,7 +252,12 @@ func newChatSendCommand(a *app) *cobra.Command {
 
 			ctx, cancel := a.context(cmd)
 			defer cancel()
-			client, err := a.clientFor(ctx, teams.SendChatMessage)
+			var client *teams.Client
+			if a.localProfile != "" {
+				client, err = a.localTeamsClient()
+			} else {
+				client, err = a.clientFor(ctx, teams.SendChatMessage)
+			}
 			if err != nil {
 				return err
 			}

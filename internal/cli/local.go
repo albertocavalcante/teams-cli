@@ -70,8 +70,9 @@ func validateLocalCommand(cmd *cobra.Command) error {
 		}
 	}
 	chatRead := cmd.Name() == "read" && cmd.Parent() != nil && cmd.Parent().Name() == "chat"
-	if cmd.Name() != "whoami" && cmd.Name() != "scopes" && cmd.Name() != "chats" && !chatRead {
-		return fmt.Errorf("local profile currently supports only whoami, scopes, chats, and chat read; %q is not available locally yet", cmd.CommandPath())
+	chatSend := cmd.Name() == "send" && cmd.Parent() != nil && cmd.Parent().Name() == "chat"
+	if cmd.Name() != "whoami" && cmd.Name() != "scopes" && cmd.Name() != "chats" && !chatRead && !chatSend {
+		return fmt.Errorf("local profile currently supports only whoami, scopes, chats, chat read, and chat send; %q is not available locally yet", cmd.CommandPath())
 	}
 	return nil
 }
