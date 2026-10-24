@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -134,7 +135,7 @@ func TestLocalProfileFailsClosedForOtherCommandsAndAuthFlags(t *testing.T) {
 		want string
 	}{
 		{[]string{"--local-profile", profile, "chats"}, "currently supports only whoami"},
-		{[]string{"--local-profile", profile, "scopes"}, "currently supports only whoami"},
+		{[]string{"--local-profile", profile, "teams"}, "currently supports only"},
 		{[]string{"--local-profile", profile, "whoami", "--authority", "https://login.microsoftonline.com/common"}, "cannot be combined"},
 		{[]string{"--local-profile", profile, "whoami", "--token-cache-dir", t.TempDir()}, "cannot be combined"},
 	} {
@@ -142,6 +143,189 @@ func TestLocalProfileFailsClosedForOtherCommandsAndAuthFlags(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Fatalf("%v: err = %v, want %q", test.args, err, test.want)
 		}
+	}
+}
+
+func TestLocalScopesUsesSessionGrants(t *testing.T) {
+	var seen atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen.Add(1)
+		if r.URL.Path != "/_local365/session" || r.Header.Get("Authorization") != "Bearer "+testLocalToken {
+			t.Errorf("request = %s %s, authorization = %q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"tenantId":"tenant","userId":"ada","expiresOn":%q,"grantedScopes":["User.Read","Chat.ReadBasic"]}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+	}))
+	t.Cleanup(server.Close)
+	profile := localTestProfile(t, server.URL+"/v1.0")
+	out, err := runLocalCLI(t, "--local-profile", profile, "scopes", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Mode          string   `json:"mode"`
+		GrantedScopes []string `json:"grantedScopes"`
+		Capabilities  []struct {
+			Name             string `json:"capability"`
+			Permitted        bool   `json:"permitted"`
+			AdminOnly        bool   `json:"adminOnly"`
+			AvailableLocally *bool  `json:"availableLocally"`
+		} `json:"capabilities"`
+		SignInCommand  string `json:"signInCommand"`
+		LocalGrantHint string `json:"localGrantHint"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("output %q: %v", out, err)
+	}
+	if report.Mode != "local" || len(report.GrantedScopes) != 2 || report.SignInCommand != "" || report.LocalGrantHint == "" {
+		t.Fatalf("report = %+v", report)
+	}
+	status := map[string]bool{}
+	available := map[string]bool{}
+	for _, capability := range report.Capabilities {
+		status[capability.Name] = capability.Permitted
+		if capability.AvailableLocally == nil {
+			t.Fatalf("local availability missing for %q", capability.Name)
+		}
+		available[capability.Name] = *capability.AvailableLocally
+		if capability.AdminOnly {
+			t.Fatalf("local capability %q incorrectly needs Microsoft admin consent", capability.Name)
+		}
+	}
+	if !status[string(teams.ReadIdentity)] || !status[string(teams.ListChats)] || status[string(teams.ReadChatMessages)] || status[string(teams.SendChatMessage)] {
+		t.Fatalf("capability statuses = %v", status)
+	}
+	if !available[string(teams.ReadIdentity)] || available[string(teams.ListChats)] || available[string(teams.SendChatMessage)] {
+		t.Fatalf("local availability = %v", available)
+	}
+	if seen.Load() != 1 {
+		t.Fatalf("requests = %d, want one session request", seen.Load())
+	}
+}
+
+func TestLocalScopesWantGrantedButUnavailable(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"tenantId":"tenant","userId":"grace","expiresOn":%q,"grantedScopes":["User.Read","Chat.Read"]}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+	}))
+	t.Cleanup(server.Close)
+	profile := localTestProfile(t, server.URL+"/v1.0")
+	out, err := runLocalCLI(t, "--local-profile", profile, "scopes", "--want", string(teams.ListChats), "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		SignInCommand  string `json:"signInCommand"`
+		LocalGrantHint string `json:"localGrantHint"`
+		Capabilities   []struct {
+			Name             string `json:"capability"`
+			Permitted        bool   `json:"permitted"`
+			AvailableLocally *bool  `json:"availableLocally"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.SignInCommand != "" || report.LocalGrantHint != "" {
+		t.Fatalf("granted capability should have no grant advice: %+v", report)
+	}
+	for _, capability := range report.Capabilities {
+		if capability.Name == string(teams.ListChats) {
+			if !capability.Permitted || capability.AvailableLocally == nil || *capability.AvailableLocally {
+				t.Fatalf("list chats = %+v, want granted but unavailable locally", capability)
+			}
+			return
+		}
+	}
+	t.Fatal("list chats missing from capability report")
+}
+
+func TestLocalReadIdentityMatchesGraphMeWithDirectoryReadAll(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1.0/me":
+			_, _ = fmt.Fprint(w, `{"id":"ada","userPrincipalName":"ada@example.test","displayName":"Ada"}`)
+		case "/_local365/session":
+			_, _ = fmt.Fprintf(w, `{"tenantId":"tenant","userId":"ada","expiresOn":%q,"grantedScopes":["Directory.Read.All"]}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	profile := localTestProfile(t, server.URL+"/v1.0")
+	if _, err := runLocalCLI(t, "--local-profile", profile, "whoami", "--json"); err != nil {
+		t.Fatalf("whoami with Directory.Read.All: %v", err)
+	}
+	out, err := runLocalCLI(t, "--local-profile", profile, "scopes", "--want", string(teams.ReadIdentity), "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		LocalGrantHint string `json:"localGrantHint"`
+		Capabilities   []struct {
+			Name             string   `json:"capability"`
+			Permitted        bool     `json:"permitted"`
+			Accepts          []string `json:"satisfiedBy"`
+			AvailableLocally *bool    `json:"availableLocally"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.LocalGrantHint != "" {
+		t.Fatalf("grant hint = %q, want none", report.LocalGrantHint)
+	}
+	for _, capability := range report.Capabilities {
+		if capability.Name == string(teams.ReadIdentity) {
+			if !capability.Permitted || capability.AvailableLocally == nil || !*capability.AvailableLocally || !slices.Contains(capability.Accepts, "Directory.Read.All") {
+				t.Fatalf("read identity = %+v, want granted, available, and Directory.Read.All accepted", capability)
+			}
+			return
+		}
+	}
+	t.Fatal("read identity missing from local capability report")
+}
+
+func TestLocalScopesWantExplainsSeedGrantsWithoutMicrosoftLogin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"tenantId":"tenant","userId":"ada","expiresOn":%q,"grantedScopes":["User.Read"]}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+	}))
+	t.Cleanup(server.Close)
+	profile := localTestProfile(t, server.URL+"/v1.0")
+	out, err := runLocalCLI(t, "--local-profile", profile, "scopes", "--want", string(teams.SendChatMessage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "ChatMessage.Send") || !strings.Contains(out, "Local365 seed") || strings.Contains(out, "teams login") {
+		t.Fatalf("local scopes output = %q", out)
+	}
+}
+
+func TestLocalScopesRejectsInvalidWantAndSessionFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+	profile := localTestProfile(t, server.URL+"/v1.0")
+	_, err := runLocalCLI(t, "--local-profile", profile, "scopes")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 401") {
+		t.Fatalf("err = %v, want session unauthorized", err)
+	}
+	_, err = runLocalCLI(t, "--local-profile", profile, "scopes", "--scopes", "Chat.Read")
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("err = %v, want real-auth flag rejection", err)
+	}
+	valid := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"tenantId":"tenant","userId":"ada","expiresOn":%q,"grantedScopes":["User.Read"]}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+	}))
+	t.Cleanup(valid.Close)
+	profile = localTestProfile(t, valid.URL+"/v1.0")
+	_, err = runLocalCLI(t, "--local-profile", profile, "scopes", "--want", "not a capability")
+	if err == nil || !strings.Contains(err.Error(), "unknown capability") {
+		t.Fatalf("err = %v, want invalid capability error", err)
 	}
 }
 

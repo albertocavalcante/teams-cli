@@ -68,8 +68,8 @@ func validateLocalCommand(cmd *cobra.Command) error {
 			return fmt.Errorf("--local-profile cannot be combined with --%s", name)
 		}
 	}
-	if cmd.Name() != "whoami" {
-		return fmt.Errorf("local profile currently supports only whoami; %q is not available locally yet", cmd.CommandPath())
+	if cmd.Name() != "whoami" && cmd.Name() != "scopes" {
+		return fmt.Errorf("local profile currently supports only whoami and scopes; %q is not available locally yet", cmd.CommandPath())
 	}
 	return nil
 }
@@ -111,73 +111,73 @@ func readPrivateFile(path string, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-func loadLocalProfile(path string) (localProfile, *url.URL, string, error) {
+func loadLocalProfile(path string) (*url.URL, string, error) {
 	profilePath, err := filepath.Abs(path)
 	if err != nil {
-		return localProfile{}, nil, "", fmt.Errorf("resolve local profile: %w", err)
+		return nil, "", fmt.Errorf("resolve local profile: %w", err)
 	}
 	dir := filepath.Dir(profilePath)
 	dirInfo, err := os.Lstat(dir)
 	if err != nil {
-		return localProfile{}, nil, "", fmt.Errorf("inspect local profile directory: %w", err)
+		return nil, "", fmt.Errorf("inspect local profile directory: %w", err)
 	}
 	if !dirInfo.IsDir() || dirInfo.Mode().Perm() != 0o700 {
-		return localProfile{}, nil, "", errors.New("local profile directory must be a private 0700 directory")
+		return nil, "", errors.New("local profile directory must be a private 0700 directory")
 	}
 	data, err := readPrivateFile(profilePath, maxLocalProfileBytes)
 	if err != nil {
-		return localProfile{}, nil, "", fmt.Errorf("read local profile: %w", err)
+		return nil, "", fmt.Errorf("read local profile: %w", err)
 	}
 	var profile localProfile
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&profile); err != nil {
-		return localProfile{}, nil, "", fmt.Errorf("decode local profile: %w", err)
+		return nil, "", fmt.Errorf("decode local profile: %w", err)
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
-		return localProfile{}, nil, "", errors.New("local profile contains trailing JSON")
+		return nil, "", errors.New("local profile contains trailing JSON")
 	}
 	if profile.SchemaVersion != 1 {
-		return localProfile{}, nil, "", fmt.Errorf("unsupported local profile schema version %d", profile.SchemaVersion)
+		return nil, "", fmt.Errorf("unsupported local profile schema version %d", profile.SchemaVersion)
 	}
 	base, err := url.Parse(profile.GraphBaseURL)
 	if err != nil || base.Scheme != "http" || base.Hostname() != "127.0.0.1" || base.EscapedPath() != "/v1.0" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
-		return localProfile{}, nil, "", errors.New("local graphBaseURL must be http://127.0.0.1:<port>/v1.0")
+		return nil, "", errors.New("local graphBaseURL must be http://127.0.0.1:<port>/v1.0")
 	}
 	port, err := strconv.Atoi(base.Port())
 	if err != nil || port < 1 || port > 65535 {
-		return localProfile{}, nil, "", errors.New("local graphBaseURL requires a valid port")
+		return nil, "", errors.New("local graphBaseURL requires a valid port")
 	}
 	if !filepath.IsAbs(profile.TokenFile) {
-		return localProfile{}, nil, "", errors.New("local tokenFile must be an absolute path")
+		return nil, "", errors.New("local tokenFile must be an absolute path")
 	}
 	if profile.TokenFile != filepath.Clean(profile.TokenFile) {
-		return localProfile{}, nil, "", errors.New("local tokenFile must use a canonical path")
+		return nil, "", errors.New("local tokenFile must use a canonical path")
 	}
 	if filepath.Dir(filepath.Clean(profile.TokenFile)) != dir || filepath.Clean(profile.TokenFile) == profilePath {
-		return localProfile{}, nil, "", errors.New("local tokenFile must be a separate file in the same private directory as the profile")
+		return nil, "", errors.New("local tokenFile must be a separate file in the same private directory as the profile")
 	}
 	tokenBytes, err := readPrivateFile(profile.TokenFile, maxLocalTokenBytes)
 	if err != nil {
-		return localProfile{}, nil, "", fmt.Errorf("read local token: %w", err)
+		return nil, "", fmt.Errorf("read local token: %w", err)
 	}
 	token := strings.TrimSpace(string(tokenBytes))
 	if token == "" || strings.ContainsAny(token, " \t\r\n") {
-		return localProfile{}, nil, "", errors.New("local token file contains no valid token")
+		return nil, "", errors.New("local token file contains no valid token")
 	}
 	encoded, ok := strings.CutPrefix(token, "l365_")
 	if !ok {
-		return localProfile{}, nil, "", errors.New("local token file must contain a Local365 token")
+		return nil, "", errors.New("local token file must contain a Local365 token")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil || len(raw) != 32 || base64.RawURLEncoding.EncodeToString(raw) != encoded {
-		return localProfile{}, nil, "", errors.New("local token file must contain a Local365 token with 32 base64url bytes")
+		return nil, "", errors.New("local token file must contain a Local365 token with 32 base64url bytes")
 	}
 	finalDirInfo, err := os.Lstat(dir)
 	if err != nil || !finalDirInfo.IsDir() || finalDirInfo.Mode().Perm() != 0o700 || !os.SameFile(dirInfo, finalDirInfo) {
-		return localProfile{}, nil, "", errors.New("local profile directory changed while reading")
+		return nil, "", errors.New("local profile directory changed while reading")
 	}
-	return profile, base, token, nil
+	return base, token, nil
 }
 
 // localHTTPClient cannot proxy, redirect, or dial outside this profile's
@@ -240,8 +240,16 @@ func getLocalSession(ctx context.Context, client *http.Client, base *url.URL, to
 	return session, nil
 }
 
+func (a *app) loadLocalSession(ctx context.Context) (localSession, error) {
+	base, token, err := loadLocalProfile(a.localProfile)
+	if err != nil {
+		return localSession{}, err
+	}
+	return getLocalSession(ctx, localHTTPClient(base), base, token)
+}
+
 func (a *app) localWhoami(ctx context.Context) (localWhoamiResult, error) {
-	_, base, token, err := loadLocalProfile(a.localProfile)
+	base, token, err := loadLocalProfile(a.localProfile)
 	if err != nil {
 		return localWhoamiResult{}, err
 	}

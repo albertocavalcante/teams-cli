@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -11,6 +12,7 @@ import (
 
 // capabilityReport is the JSON shape of the scopes command.
 type capabilityReport struct {
+	Mode         string             `json:"mode,omitempty"`
 	Granted      []string           `json:"grantedScopes"`
 	Capabilities []capabilityStatus `json:"capabilities"`
 	// SignInCommand is populated only when something user-consentable is
@@ -18,6 +20,9 @@ type capabilityReport struct {
 	// left empty when the only gaps need a tenant administrator: there is no
 	// sign-in line that would grant those.
 	SignInCommand string `json:"signInCommand,omitempty"`
+	// LocalGrantHint is shown only with a local profile. Local grants come from
+	// the selected synthetic persona's seed, never Microsoft consent.
+	LocalGrantHint string `json:"localGrantHint,omitempty"`
 }
 
 type capabilityStatus struct {
@@ -25,6 +30,55 @@ type capabilityStatus struct {
 	Permitted bool     `json:"permitted"`
 	AdminOnly bool     `json:"adminOnly,omitempty"`
 	Accepts   []string `json:"satisfiedBy"`
+	// AvailableLocally is set only in Local365 mode. A Graph permission can be
+	// granted before the matching emulator route or CLI command exists.
+	AvailableLocally *bool `json:"availableLocally,omitempty"`
+}
+
+func localCapabilityAvailable(capability teams.Capability) bool {
+	return capability == teams.ReadIdentity
+}
+
+// Local365's /me route accepts additional directory scopes that the Teams
+// SDK's general ReadIdentity capability table does not list. Local reporting
+// must agree with the route the local whoami command actually calls.
+var localIdentityScopes = []string{
+	"User.Read",
+	"User.ReadWrite",
+	"User.ReadBasic.All",
+	"User.Read.All",
+	"User.ReadWrite.All",
+	"Directory.Read.All",
+	"Directory.ReadWrite.All",
+}
+
+func localCapabilityGranted(granted []string, capability teams.Capability) bool {
+	if capability != teams.ReadIdentity {
+		return teams.Granted(granted, capability)
+	}
+	for _, scope := range granted {
+		if slices.Contains(localIdentityScopes, scope) {
+			return true
+		}
+	}
+	return false
+}
+
+func localCapabilityScopes(capability teams.Capability) []string {
+	if capability == teams.ReadIdentity {
+		return slices.Clone(localIdentityScopes)
+	}
+	return teams.ScopesFor(capability)
+}
+
+func localMissingFor(granted []string, capabilities []teams.Capability) []teams.Capability {
+	var missing []teams.Capability
+	for _, capability := range capabilities {
+		if !localCapabilityGranted(granted, capability) {
+			missing = append(missing, capability)
+		}
+	}
+	return missing
 }
 
 func newScopesCommand(a *app) *cobra.Command {
@@ -43,7 +97,9 @@ func newScopesCommand(a *app) *cobra.Command {
 			"than given a sign-in line, because no consent screen a signed-in user\n" +
 			"sees ever offers them.\n\n" +
 			"With --want, the command prints the sign-in line that would grant the\n" +
-			"named user-consentable capabilities, keeping everything already granted.",
+			"named user-consentable capabilities, keeping everything already granted.\n\n" +
+			"With --local-profile, grants come from the synthetic Local365 persona.\n" +
+			"The LOCAL column shows which capabilities have working local commands.",
 		Example: strings.Join([]string{
 			"  teams scopes",
 			"  teams scopes --json",
@@ -57,45 +113,83 @@ func newScopesCommand(a *app) *cobra.Command {
 			ctx, cancel := a.context(cmd)
 			defer cancel()
 
-			granted, err := a.grantedScopes(ctx, a)
-			if err != nil {
-				return err
+			local := a.localProfile != ""
+			var granted []string
+			if local {
+				session, err := a.loadLocalSession(ctx)
+				if err != nil {
+					return err
+				}
+				granted = session.GrantedScopes
+			} else {
+				var err error
+				granted, err = a.grantedScopes(ctx, a)
+				if err != nil {
+					return err
+				}
 			}
 
 			report := capabilityReport{Granted: granted}
+			if local {
+				report.Mode = "local"
+			}
 			var missing []teams.Capability
 			for _, capability := range teams.Capabilities() {
 				permitted := teams.Granted(granted, capability)
+				if local {
+					permitted = localCapabilityGranted(granted, capability)
+				}
 				if !permitted {
 					missing = append(missing, capability)
 				}
+				var available *bool
+				if local {
+					implemented := localCapabilityAvailable(capability)
+					available = &implemented
+				}
+				accepts := teams.ScopesFor(capability)
+				if local {
+					accepts = localCapabilityScopes(capability)
+				}
 				report.Capabilities = append(report.Capabilities, capabilityStatus{
-					Name:      string(capability),
-					Permitted: permitted,
-					AdminOnly: teams.NeedsAdminConsent(capability),
-					Accepts:   teams.ScopesFor(capability),
+					Name:             string(capability),
+					Permitted:        permitted,
+					AdminOnly:        !local && teams.NeedsAdminConsent(capability),
+					Accepts:          accepts,
+					AvailableLocally: available,
 				})
 			}
 
 			// --want narrows the suggestion to what was asked for; otherwise
 			// everything user-consentable and missing is offered.
 			target := missing
+			var err error
 			if len(want) > 0 {
 				target, err = parseCapabilities(want)
 				if err != nil {
 					return err
 				}
-				target = teams.MissingFor(granted, target...)
-			}
-			var consentable []teams.Capability
-			for _, capability := range target {
-				if !teams.NeedsAdminConsent(capability) {
-					consentable = append(consentable, capability)
+				if local {
+					target = localMissingFor(granted, target)
+				} else {
+					target = teams.MissingFor(granted, target...)
 				}
 			}
-			if len(consentable) > 0 {
-				report.SignInCommand = "teams login --scopes " +
-					strings.Join(teams.ScopesToRequest(granted, consentable...), ",")
+			if local {
+				if len(target) > 0 {
+					report.LocalGrantHint = "Update this persona's scopes in the Local365 seed and restart Local365 to test these grants."
+				}
+			} else {
+				var consentable []teams.Capability
+				for _, capability := range target {
+					if !teams.NeedsAdminConsent(capability) {
+						consentable = append(consentable, capability)
+					}
+				}
+				if len(consentable) > 0 {
+					report.SignInCommand = "teams login --scopes " +
+						strings.Join(teams.ScopesToRequest(granted, consentable...), ",")
+				}
 			}
 
 			if a.jsonOut {
@@ -103,7 +197,11 @@ func newScopesCommand(a *app) *cobra.Command {
 			}
 
 			tw := tabwriter.NewWriter(a.out, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(tw, "CAPABILITY\tPERMITTED\tSATISFIED BY")
+			if local {
+				fmt.Fprintln(tw, "CAPABILITY\tPERMITTED\tLOCAL\tSATISFIED BY")
+			} else {
+				fmt.Fprintln(tw, "CAPABILITY\tPERMITTED\tSATISFIED BY")
+			}
 			for _, status := range report.Capabilities {
 				mark := "no"
 				if status.Permitted {
@@ -112,13 +210,24 @@ func newScopesCommand(a *app) *cobra.Command {
 				if status.AdminOnly && !status.Permitted {
 					mark = "no (admin only)"
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\n", status.Name, mark, strings.Join(status.Accepts, " or "))
+				if local {
+					localMark := "no"
+					if status.AvailableLocally != nil && *status.AvailableLocally {
+						localMark = "yes"
+					}
+					fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", status.Name, mark, localMark, strings.Join(status.Accepts, " or "))
+				} else {
+					fmt.Fprintf(tw, "%s\t%s\t%s\n", status.Name, mark, strings.Join(status.Accepts, " or "))
+				}
 			}
 			if err := tw.Flush(); err != nil {
 				return err
 			}
 			if report.SignInCommand != "" {
 				fmt.Fprintf(a.out, "\nTo grant what is missing:\n  %s\n", report.SignInCommand)
+			}
+			if report.LocalGrantHint != "" {
+				fmt.Fprintf(a.out, "\n%s\n", report.LocalGrantHint)
 			}
 			return nil
 		},
